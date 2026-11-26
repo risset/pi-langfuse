@@ -404,6 +404,38 @@ Root sessions carry neither key. Only the parent session id is read; the parent 
 Standalone compaction and idle cache-warming traces retain these links, including
 cache-warming usage and costs, through both OTel export and REST fallback.
 
+## Custom Trace Context
+
+Clients that drive Pi, such as an editor talking to `pi --mode rpc`, can attach their own flat metadata (for example a task ID) to every later trace of the current session. The `/langfuse-context` command sets, clears, or shows it without a model call:
+
+```text
+/langfuse-context set {"schemaVersion":1,"operationId":"<uuid>","attributes":{"taskId":"<uuid>","taskAttemptId":"<uuid>","taskType":"review","workflowName":"review-pull-request","workflowVersion":"sha256:0123abcd","classificationSource":"workflow","externalRef":"https://github.com/org/repo/pull/1"}}
+/langfuse-context clear {"schemaVersion":1,"operationId":"<uuid>"}
+/langfuse-context status
+```
+
+Over RPC, send these as ordinary `prompt` records. The response's `disposition` is `"handled"` whether or not the operation was accepted, so confirm acceptance by reading `get_entries`: an accepted operation is a `custom` entry with `customType` `"pi-langfuse.context"` whose `data` is `{schemaVersion, op, operationId, sessionId, attributes?}`, on the active branch (walk `parentId` from `leafId`) and with `data.sessionId` equal to `get_state`'s `sessionId`. Use `get_commands` to check that the command exists before sending it; on a Pi without this package the text would otherwise become a model prompt. Rejections are reported through an extension `notify` and leave the previous context unchanged.
+
+Rules:
+
+- **Set replaces** the whole custom context; it never merges with the previous one. **Clear** writes an explicit tombstone, so a restart cannot resurrect older context.
+- Operations are **idempotent by `operationId`** on the active branch. Repeating an identical operation is a no-op; reusing an ID for a different payload is rejected.
+- Changes are accepted only while Pi is **fully idle**: no run, retry, compaction or queued message. A run takes an immutable snapshot when it starts, and steering or follow-ups stay in that run.
+- Values are **strings of 1-200 characters** (Langfuse drops longer propagated values), at most 24 keys and 4 KB in total. Keys match `[A-Za-z][A-Za-z0-9_]*`. Keys owned by this integration (`sessionId`, `model`, `provider`, `cwd`, `attemptIndex`, any `session*`/`model*`/`provider*`/`pi*`/`langfuse*` key, ...) and credential-like names are rejected. Values go through the same redaction as other telemetry: detected secrets are rejected, and absolute paths are hashed unless `LANGFUSE_CAPTURE_PATHS` is on. `taskAttemptId` requires `taskId`; `classificationSource` is `workflow` or `user`.
+- Context lives in the **session tree**. It is rebuilt from the active branch on startup, resume, reload and `/tree` navigation. Entries copied into a fork or clone belong to the parent session and are ignored, so derived sessions, including `pi-subagents` children, start clear. The entries are not model context.
+
+Attributes appear as trace metadata on the root `pi-agent` observation and are propagated to every descendant (attempts, turns, generations, tools, nested tools and events), together with `piContextRevision`. Model, provider and cost fields are unchanged. Standalone compaction and idle cache-warming traces (`piScope: "session"`) stay session-only; maintenance nested inside a run inherits the run's context. `/langfuse-status` shows the active context.
+
+Filter by task in the Langfuse v2 API with a metadata filter:
+
+```bash
+filter='[{"type":"stringObject","column":"metadata","key":"taskId","operator":"=","value":"<task-id>"}]'
+curl -s -u "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" -G \
+  "$LANGFUSE_HOST/api/public/v2/observations" \
+  --data-urlencode "fromStartTime=2026-01-01T00:00:00Z" --data-urlencode "toStartTime=2026-12-31T00:00:00Z" \
+  --data-urlencode "fields=core,usage,metadata" --data-urlencode "filter=$filter"
+```
+
 ## Troubleshooting
 
 ### No traces appearing?

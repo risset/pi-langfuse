@@ -20,6 +20,8 @@ feature documentation, prefer `README.md` and `README_CN.md`.
 - `src/handlers/tool.ts`: tracks tool observations, correlates them by `toolCallId`, and records tool error scores.
 - `src/handlers/turn.ts`: creates turn-level span wrappers so generations and tools can nest under a turn.
 - `src/state.ts`: session-scoped mutable runtime state built on `AsyncLocalStorage`.
+- `src/telemetry-context.ts`: schema, validation and branch-aware reconstruction of caller-supplied trace context.
+- `src/context-command.ts`: `/langfuse-context set|clear|status`, idle checks and per-session context cache.
 - `src/session-lineage.ts`: resolves the parent session id from Pi's session header and caches lineage per session.
 - `src/config.ts`: config loading, first-run setup UI, and config persistence.
 - `src/langfuse.ts`: Langfuse runtime bootstrap, score client, flush/shutdown, and REST fallback ingestion.
@@ -29,6 +31,8 @@ feature documentation, prefer `README.md` and `README_CN.md`.
 - `test/state.test.ts`: verifies per-session state isolation and overlapping async session safety.
 - `test/session-lineage.test.ts`: verifies parent id resolution, the `subagent`/`fork` label, caching, and
   that lineage does not leak across sessions.
+- `test/telemetry-context.test.ts` / `test/context-propagation.test.ts`: context validation, persistence and
+  propagation through a real in-process Pi session and exported spans.
 - `test/utils.test.ts`: verifies payload shaping limits and circular handling.
 - `.agents/skills/langfuse/`: local Langfuse skill docs and references used by agents working in this repo.
 

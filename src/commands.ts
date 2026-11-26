@@ -13,6 +13,13 @@ import { createCapturePolicy, type PrivacyPreset, type CapturePolicy } from "./c
 import { getRuntime, getLastRuntimeError, forceShutdownRuntime as shutdownLangfuseRuntime } from "./langfuse.js";
 import { state } from "./state.js";
 import type { Config, LangfuseRuntime } from "./types.js";
+import { currentTelemetryContext } from "./context-command.js";
+import { CONTEXT_SCHEMA_VERSION, summarizeContext } from "./telemetry-context.js";
+
+function contextStatusLine(): string {
+  const context = currentTelemetryContext();
+  return `Custom context: ${summarizeContext(context)} (schema v${CONTEXT_SCHEMA_VERSION}, revision ${context.revision})`;
+}
 
 const PRIVACY_PRESETS = ["metadata-only", "prompts-only", "conversations", "full-debug"] as const;
 
@@ -223,6 +230,7 @@ function formatStatus(configPath: string, env: Record<string, string | undefined
     `  cwd: ${flag(policy.captureCwd)}`,
     `  absolute paths: ${flag(policy.capturePaths)}`,
     `Active run: ${hasActiveAgentObservation() ? "yes" : "no"}`,
+    contextStatusLine(),
     `Last error: ${lastErrorSummary()}`,
   ].join("\n");
 }

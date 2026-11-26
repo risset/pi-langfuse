@@ -7,6 +7,20 @@ import { applyCapturePolicy } from "../capture-policy.js";
 import { collectSourceMetadata } from "../source-metadata.js";
 import { sessionLineageMetadata } from "../session-lineage.js";
 import { startChildObservation } from "../observation.js";
+import { refreshTelemetryContext } from "../context-command.js";
+import type { ContextState } from "../telemetry-context.js";
+
+/**
+ * Trace metadata contributed by caller-supplied context. Integration-owned
+ * keys are applied after these and the validator rejects collisions, so a
+ * caller cannot relabel session, model or provider identity.
+ */
+function contextMetadata(context: ContextState): Record<string, string> {
+  if (!context.attributes) {
+    return {};
+  }
+  return { ...context.attributes, piContextRevision: String(context.revision) };
+}
 
 function stringMetadata(metadata: Record<string, unknown> | undefined): Record<string, string> | undefined {
   if (!metadata) {
@@ -38,6 +52,10 @@ export function updateTraceIO(input?: unknown, output?: unknown) {
 }
 
 export async function startAgentRun(event: Record<string, unknown>, ctx: any) {
+  // Snapshot before any await: the run owns this context even if it changes
+  // later (changes are refused while Pi is busy, but the snapshot is the rule).
+  const telemetryContext = refreshTelemetryContext(ctx?.sessionManager, state.currentSessionId || undefined);
+
   if (!(await ensureConfig(ctx))) {
     state.isTracingDisabled = true;
     return;
@@ -67,6 +85,7 @@ export async function startAgentRun(event: Record<string, unknown>, ctx: any) {
       {
         input: rawPromptInput,
         metadata: {
+          ...contextMetadata(telemetryContext),
           cwd,
           ...sourceMetadata,
           ...(state.currentModel ? { model: state.currentModel } : {}),

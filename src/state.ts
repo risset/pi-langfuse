@@ -1,5 +1,18 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Config, AgentState } from "./types.js";
+import type { ContextState } from "./telemetry-context.js";
+
+/**
+ * Defined here rather than in telemetry-context.ts: that module reaches this
+ * one through redaction.ts, and the default session state below is created
+ * while this module is evaluated.
+ */
+export const EMPTY_CONTEXT_STATE: ContextState = Object.freeze({
+  revision: 0,
+  operations: new Map(),
+  inheritedEntries: 0,
+  ignoredEntries: 0,
+});
 
 export interface SessionRunState {
   currentModel: string;
@@ -19,6 +32,8 @@ export interface SessionRunState {
   systemStateSequence: number;
   seenSystemEntryIds: Set<string>;
   seenUsageEntryIds: Set<string>;
+  /** Caller-supplied telemetry context rebuilt from the active branch; survives per-run resets. */
+  telemetryContext: ContextState;
 }
 
 const DEFAULT_SESSION_ID = "__pi_langfuse_default_session__";
@@ -41,6 +56,7 @@ function createSessionRunState(): SessionRunState {
     systemStateSequence: 0,
     seenSystemEntryIds: new Set(),
     seenUsageEntryIds: new Set(),
+    telemetryContext: EMPTY_CONTEXT_STATE,
   };
 }
 
@@ -157,6 +173,7 @@ export function resetRunState(sessionId = getActiveSessionId()) {
     systemStateSequence: previous?.systemStateSequence ?? 0,
     seenSystemEntryIds: previous?.seenSystemEntryIds ?? new Set(),
     seenUsageEntryIds: previous?.seenUsageEntryIds ?? new Set(),
+    telemetryContext: previous?.telemetryContext ?? EMPTY_CONTEXT_STATE,
   });
 }
 

@@ -6,7 +6,9 @@ import * as tracing from "@langfuse/tracing";
 import { forceShutdownRuntime, getRuntime } from "../src/langfuse.ts";
 import { startSessionObservation } from "../src/observation.ts";
 import { recordCacheWarmingDecision, recordNewUsageEntries } from "../src/handlers/cache.ts";
-import { clearAllSessionStates, state } from "../src/state.ts";
+import { clearAllSessionStates, runWithSession, state } from "../src/state.ts";
+import { startAgentRun } from "../src/handlers/agent.ts";
+import { CONTEXT_ENTRY_TYPE } from "../src/telemetry-context.ts";
 
 async function withFallback(run: (runtime: Awaited<ReturnType<typeof getRuntime>>, batches: any[][], visible: Set<string>, exportedNames: string[]) => Promise<void>) {
   const previousConfig = state.config;
@@ -197,4 +199,25 @@ test("idle child cache roots retain parent links and costs through REST fallback
     if (previousChildFlag === undefined) delete process.env.PI_SUBAGENT_CHILD;
     else process.env.PI_SUBAGENT_CHILD = previousChildFlag;
   }
+}));
+
+test("REST fallback keeps custom context on the restored agent trace", async () => withFallback(async (runtime, batches) => {
+  const sessionId = "context-fallback-session";
+  const branch = [{ type: "custom", customType: CONTEXT_ENTRY_TYPE, id: "c1", parentId: null, data: {
+    schemaVersion: 1, op: "set", operationId: "op-fallback-1", sessionId,
+    attributes: { taskId: "task-fallback", taskType: "review" },
+  } }];
+  await runWithSession(sessionId, async () => {
+    await startAgentRun({ prompt: "hi" }, { sessionManager: { getBranch: () => branch, getSessionId: () => sessionId } });
+    const root = state.agentState!.root!;
+    const child = root.startObservation!("turn", {}, { asType: "span" });
+    child.end();
+    root.end();
+  });
+  await forceShutdownRuntime();
+  const trace = batches.flat().find(entry => entry.type === "trace-create")?.body;
+  assert.equal(trace?.sessionId, sessionId);
+  assert.equal(trace?.metadata.taskId, "task-fallback");
+  assert.equal(trace?.metadata.taskType, "review");
+  assert.equal(trace?.metadata.piContextRevision, "1");
 }));

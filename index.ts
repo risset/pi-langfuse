@@ -15,6 +15,8 @@ import { bindSessionLineage } from "./src/session-lineage.js";
 import { ensureConfig, promptForConfig, loadConfig } from "./src/config.js";
 import { shutdownRuntime } from "./src/langfuse.js";
 import { handleLangfusePrivacyCommand, handleLangfuseStatusCommand, handleLangfuseTestCommand } from "./src/commands.js";
+import { handleLangfuseContextCommand, refreshTelemetryContext } from "./src/context-command.js";
+import { CONTEXT_COMMAND } from "./src/telemetry-context.js";
 import { getMessageFromEvent, extractAssistantOutput } from "./src/utils.js";
 import {
   startAgentRun,
@@ -89,7 +91,20 @@ export default async function (pi: ExtensionAPI) {
     },
   });
 
-  const getSessionId = (ctx?: unknown): string | undefined => {
+  pi.registerCommand(CONTEXT_COMMAND, {
+    description: "Set, clear or show custom Langfuse trace metadata for this session (set <JSON> | clear <JSON> | status)",
+    handler: async (args, ctx) => {
+      const sessionId = getSessionId(ctx);
+      runWithSession(sessionId ?? state.currentSessionId, () => {
+        handleLangfuseContextCommand(String(args ?? ""), ctx, {
+          sessionId,
+          appendEntry: (customType, data) => pi.appendEntry(customType, data),
+        });
+      });
+    },
+  });
+
+  function getSessionId(ctx?: unknown): string | undefined {
     try {
       const sessionManager = (ctx as ExtensionContext | undefined)?.sessionManager;
       const sessionId = sessionManager?.getSessionId?.();
@@ -104,7 +119,7 @@ export default async function (pi: ExtensionAPI) {
     } catch {
       return undefined;
     }
-  };
+  }
 
   const withSession = <T>(ctx: any, fn: () => T): T => runWithSession(getSessionId(ctx) ?? state.currentSessionId, fn);
 
@@ -113,6 +128,9 @@ export default async function (pi: ExtensionAPI) {
     await ensureConfig(ctx);
     resetRunState();
     bindSessionLineage(ctx?.sessionManager);
+    // Resume restores this session's own context; fresh and forked/cloned
+    // sessions start clear because copied entries belong to another session.
+    refreshTelemetryContext(ctx?.sessionManager, getSessionId(ctx));
     initializeSystemStateTracking(ctx);
     initializeUsageTracking(ctx);
   }));
@@ -224,6 +242,10 @@ export default async function (pi: ExtensionAPI) {
       setCurrentSession(sessionId);
     }
   });
+
+  pi.on("session_tree", async (_event, ctx) => withSession(ctx, async () => {
+    refreshTelemetryContext(ctx?.sessionManager, getSessionId(ctx));
+  }));
 
   pi.on("session_compact", async (event, ctx) => withSession(ctx, async () => {
     await recordSessionCompaction(asRecord(event));
